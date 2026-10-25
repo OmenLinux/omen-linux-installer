@@ -26,8 +26,6 @@
   <ItemGroup>
     <!-- Golden DSDTs from https://github.com/OmenLinux/ACPI-Fix-for-HP-Omen-16-u0000sl -->
     <None Include="Fixtures\Omen16-u0000sl\**" CopyToOutputDirectory="PreserveNewest" />
-    <!-- iasl.wasm lives next to the app; tests need a copy for IaslRunner. -->
-    <None Include="..\windows-tool\Iasl\**" Link="Iasl\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
