@@ -9,7 +9,7 @@ public sealed record IsoInjectionResult(
     long OriginalInitramfsLength,
     long InjectedBytes,
     string OutputIsoPath,
-    bool KeyboardInstallerAdded,
+    bool PostInstallScriptAdded,
     bool ApplyScriptAdded);
 
 public sealed record VerifiedAcpiTable(string Name, int Length, string Sha256);
@@ -18,8 +18,8 @@ public sealed record IsoVerifyResult(string InitramfsPath, long InitramfsLength,
 
 /// <summary>
 /// Prepends an ACPI-only uncompressed cpio to the ISO initramfs (live boot),
-/// and ships the same bytes as <c>omen-acpi.cpio</c> plus a tiny apply script
-/// on the ISO root for post-install. No cmdline / GRUB / .deb / casper hooks.
+/// and ships <c>omen-acpi.cpio</c>, live-session <c>apply-omen-acpi.sh</c>, and
+/// booted-OS <c>post-install-omen.sh</c> on the ISO root.
 /// </summary>
 public static class IsoAcpiInjector
 {
@@ -92,6 +92,8 @@ public static class IsoAcpiInjector
         var acpiCpio = CpioBuilder.BuildAcpiOverrideArchive(acpiTables);
         await Iso9660Patcher.InjectPrependedFileAsync(sourceIsoPath, destIsoPath, initramfsPath, acpiCpio);
 
+        // Root helpers are best-effort for live/post-install convenience; the
+        // initramfs prepend above is what makes the live session bootable with ACPI.
         var applyAdded = false;
         try
         {
@@ -118,27 +120,27 @@ public static class IsoAcpiInjector
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"ISO root helpers not added: {ex}");
+            System.Diagnostics.Trace.TraceWarning($"ISO root helpers not added: {ex.Message}");
         }
 
-        var keyboardAdded = false;
+        var postInstallAdded = false;
         try
         {
             await Iso9660Patcher.AddRootFileAsync(
                 destIsoPath,
-                KeyboardDriverInstaller.Iso9660FileName,
-                KeyboardDriverInstaller.JolietFileName,
-                KeyboardDriverInstaller.ReadScriptBytes(),
-                KeyboardDriverInstaller.RockRidgeFileName);
-            keyboardAdded = true;
+                PostInstallPayload.Iso9660FileName,
+                PostInstallPayload.JolietFileName,
+                PostInstallPayload.ReadScriptBytes(),
+                PostInstallPayload.RockRidgeFileName);
+            postInstallAdded = true;
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"Keyboard installer not added to ISO: {ex}");
+            System.Diagnostics.Trace.TraceWarning($"Post-install script not added to ISO: {ex.Message}");
         }
 
         return new IsoInjectionResult(
-            initramfsPath, originalLength, acpiCpio.Length, destIsoPath, keyboardAdded, applyAdded);
+            initramfsPath, originalLength, acpiCpio.Length, destIsoPath, postInstallAdded, applyAdded);
     }
 
     public static async Task<IsoVerifyResult> VerifyAsync(string isoPath)

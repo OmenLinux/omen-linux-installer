@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -21,7 +21,7 @@
     <!-- Bundled into the assembly so PublishSingleFile is truly one .exe -->
     <EmbeddedResource Include="Iasl\iasl.wasm" LogicalName="OmenPrep.Iasl.iasl.wasm" />
     <EmbeddedResource Include="Resources\apply-omen-acpi.sh" LogicalName="OmenPrep.apply-omen-acpi.sh" />
-    <EmbeddedResource Include="Resources\install-omen-keyboard.sh" LogicalName="OmenPrep.install-omen-keyboard.sh" />
+    <EmbeddedResource Include="Resources\post-install-omen.sh" LogicalName="OmenPrep.post-install-omen.sh" />
     <Resource Include="Assets\app-icon.ico" />
     <Resource Include="Assets\app-icon-small.png" />
   </ItemGroup>

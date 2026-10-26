@@ -17,12 +17,19 @@ namespace OmenPrep.Services;
 /// pointer to point at the new location. Every other byte of the original
 /// image - boot catalog, bootloaders, every other file - is untouched.
 ///
+/// After any grow we also (1) bump ISO9660 Volume Space Size so the new
+/// extents are inside the volume, and (2) relocate the protective GPT
+/// backup header to the new end of image. Skipping those leaves hybrid
+/// Ubuntu/Fedora USBs with a GPT whose Alternate LBA is mid-disk — many
+/// firmwares then hide the EFI boot entry entirely.
+///
 /// Based on ECMA-119 (ISO9660) directory record layout and the
 /// Rock Ridge / SUSP "NM" extension for long POSIX names.
 /// </summary>
 public static class Iso9660Patcher
 {
     private const int SectorSize = 2048;
+    private const int GptSectorSize = 512;
 
     public sealed record LocatedFile(string TreeName, long RecordOffset, uint Lba, uint DataLength);
 
@@ -131,6 +138,7 @@ public static class Iso9660Patcher
                 PatchDirectoryRecord(dst, loc.RecordOffset, newLba, newLength);
             }
 
+            FinalizeIsoGrowth(dst);
             await dst.FlushAsync();
         }
     }
@@ -171,6 +179,7 @@ public static class Iso9660Patcher
             foreach (var loc in located)
                 PatchDirectoryRecord(iso, loc.RecordOffset, newLba, (uint)newContent.Length);
 
+            FinalizeIsoGrowth(iso);
             await iso.FlushAsync();
         }
     }
@@ -244,6 +253,12 @@ public static class Iso9660Patcher
             // Volume descriptor's embedded root record (offset 156 in PVD/SVD).
             PatchDirectoryRecord(iso, tree.Root.AbsoluteOffset, newRootLba, newDirLength);
 
+            // Path tables still name the old root extent — keep them in sync.
+            PatchPathTableRootExtent(iso, tree.TypeLPathTableLba, tree.PathTableSize, newRootLba, typeM: false);
+            PatchPathTableRootExtent(iso, tree.OptionalTypeLPathTableLba, tree.PathTableSize, newRootLba, typeM: false);
+            PatchPathTableRootExtent(iso, tree.TypeMPathTableLba, tree.PathTableSize, newRootLba, typeM: true);
+            PatchPathTableRootExtent(iso, tree.OptionalTypeMPathTableLba, tree.PathTableSize, newRootLba, typeM: true);
+
             // First-level subdirectories still point .. at the old root.
             foreach (var child in existing.Where(e => e.IsDirectory && e.Name is not ("." or "..")))
             {
@@ -251,6 +266,7 @@ public static class Iso9660Patcher
             }
         }
 
+        FinalizeIsoGrowth(iso);
         await iso.FlushAsync();
     }
 
@@ -380,7 +396,15 @@ public static class Iso9660Patcher
         Array.Copy(be, 0, buffer, offset + 4, 4);
     }
 
-    private sealed record VolumeTree(string Name, bool IsJoliet, DirRecord Root);
+    private sealed record VolumeTree(
+        string Name,
+        bool IsJoliet,
+        DirRecord Root,
+        uint PathTableSize,
+        uint TypeLPathTableLba,
+        uint OptionalTypeLPathTableLba,
+        uint TypeMPathTableLba,
+        uint OptionalTypeMPathTableLba);
 
     private static List<VolumeTree> FindVolumeTrees(Stream iso)
     {
@@ -404,10 +428,204 @@ public static class Iso9660Patcher
             var root = ParseDirRecord(sector, 156, rootRecordOffset, isJoliet);
             if (root is null) continue;
 
-            trees.Add(new VolumeTree(isJoliet ? "Joliet" : "Primary", isJoliet, root));
+            // ECMA-119 path table fields (LE half first; Type M locations are BE).
+            var pathTableSize = ReadBothEndianUInt32(sector, 132);
+            var typeL = BitConverter.ToUInt32(sector, 140);
+            var optL = BitConverter.ToUInt32(sector, 144);
+            var typeM = ReadBigEndianUInt32(sector, 148);
+            var optM = ReadBigEndianUInt32(sector, 152);
+
+            trees.Add(new VolumeTree(
+                isJoliet ? "Joliet" : "Primary",
+                isJoliet,
+                root,
+                pathTableSize,
+                typeL,
+                optL,
+                typeM,
+                optM));
         }
 
         return trees;
+    }
+
+    /// <summary>
+    /// After appending extents past the original end: move the hybrid GPT
+    /// backup into freshly appended space (never overlapping ISO payloads),
+    /// then publish the final size to every ISO9660 volume descriptor.
+    /// </summary>
+    private static void FinalizeIsoGrowth(Stream iso)
+    {
+        if (iso.Length % SectorSize != 0)
+            throw new InvalidDataException("ISO size is not a whole number of sectors after growth.");
+
+        // GPT first — it may extend the file; volume size must reflect that.
+        SyncHybridGptAfterGrow(iso);
+        UpdateVolumeSpaceSize(iso);
+    }
+
+    private static void UpdateVolumeSpaceSize(Stream iso)
+    {
+        var sectorCount = (uint)(iso.Length / SectorSize);
+        var sector = new byte[SectorSize];
+
+        for (var lba = 16; lba < 16 + 32; lba++)
+        {
+            iso.Seek((long)lba * SectorSize, SeekOrigin.Begin);
+            if (iso.Read(sector, 0, SectorSize) < SectorSize) break;
+
+            var type = sector[0];
+            if (type == 255) break;
+            // Primary (1), Supplementary/Joliet (2), and Enhanced (2/3) all carry Volume Space Size at 80.
+            if (type is not (1 or 2 or 3)) continue;
+
+            WriteBothEndian(sector, 80, sectorCount);
+            iso.Seek((long)lba * SectorSize, SeekOrigin.Begin);
+            iso.Write(sector, 0, SectorSize);
+        }
+    }
+
+    private static void PatchPathTableRootExtent(
+        Stream iso, uint pathTableLba, uint pathTableSize, uint newRootLba, bool typeM)
+    {
+        if (pathTableLba == 0 || pathTableSize < 8) return;
+
+        var buf = new byte[8];
+        iso.Seek((long)pathTableLba * SectorSize, SeekOrigin.Begin);
+        if (iso.Read(buf, 0, 8) < 8) return;
+
+        // Root path-table record: LEN_DI=1, Extent at offset 2, name 0x00.
+        if (buf[0] != 1) return;
+
+        if (typeM)
+        {
+            var be = BitConverter.GetBytes(newRootLba);
+            Array.Reverse(be);
+            Array.Copy(be, 0, buf, 2, 4);
+        }
+        else
+        {
+            Array.Copy(BitConverter.GetBytes(newRootLba), 0, buf, 2, 4);
+        }
+
+        iso.Seek((long)pathTableLba * SectorSize, SeekOrigin.Begin);
+        iso.Write(buf, 0, 8);
+    }
+
+    /// <summary>
+    /// Hybrid isohybrid images put a GPT on the ISO. After we append bytes the
+    /// backup header is no longer at the end of the disk; firmware then
+    /// treats the GPT as invalid and drops the EFI boot entry.
+    /// <para>
+    /// Important: the backup must be written into <em>newly appended</em> space.
+    /// Writing it over the current end of the file destroys the just-added
+    /// initrd / relocated root directory — GRUB then reports
+    /// <c>/boot not found</c> and the live initrd crashes.
+    /// </para>
+    /// </summary>
+    private static void SyncHybridGptAfterGrow(Stream iso)
+    {
+        if (iso.Length % GptSectorSize != 0) return;
+
+        var header = new byte[GptSectorSize];
+        iso.Seek(GptSectorSize, SeekOrigin.Begin); // LBA 1
+        if (iso.Read(header, 0, GptSectorSize) < GptSectorSize) return;
+        if (Encoding.ASCII.GetString(header, 0, 8) != "EFI PART") return;
+
+        var headerSize = BitConverter.ToUInt32(header, 12);
+        if (headerSize < 92 || headerSize > GptSectorSize) return;
+
+        var partEntryLba = BitConverter.ToUInt64(header, 72);
+        var numEntries = BitConverter.ToUInt32(header, 80);
+        var entrySize = BitConverter.ToUInt32(header, 84);
+        if (numEntries == 0 || entrySize < 128 || partEntryLba == 0) return;
+
+        var partArrayBytes = checked((int)(numEntries * entrySize));
+        var partArrayLbas = (partArrayBytes + GptSectorSize - 1) / GptSectorSize;
+        var gptTailSectors512 = partArrayLbas + 1; // partition array + backup header
+
+        // Round the GPT tail up so the whole image stays 2048-byte aligned.
+        var gptTailSectorsAligned = ((gptTailSectors512 + 3) / 4) * 4;
+        var gptTailBytes = gptTailSectorsAligned * GptSectorSize;
+
+        var alternateLba = BitConverter.ToUInt64(header, 32);
+        var payloadEnd512 = iso.Length / GptSectorSize;
+        var newAlt = (ulong)payloadEnd512 + (ulong)gptTailSectorsAligned - 1;
+        if (alternateLba == newAlt && iso.Length >= (long)(newAlt + 1) * GptSectorSize)
+            return; // already has a trailing GPT backup past payloads
+
+        var partArray = new byte[partArrayLbas * GptSectorSize];
+        iso.Seek((long)partEntryLba * GptSectorSize, SeekOrigin.Begin);
+        iso.ReadExactly(partArray, 0, partArrayBytes);
+
+        // Extend past ISO payloads, then place backup GPT in the extension only.
+        iso.Seek(0, SeekOrigin.End);
+        iso.Write(new byte[gptTailBytes]);
+
+        var newBackupPartLba = newAlt - (ulong)partArrayLbas;
+
+        // Primary header: Alternate LBA → new end. Partition entry LBA unchanged.
+        WriteUInt64LE(header, 32, newAlt);
+        WriteUInt32LE(header, 16, 0); // CRC must be zero while computing
+        WriteUInt32LE(header, 16, Crc32Ieee(header.AsSpan(0, (int)headerSize)));
+
+        iso.Seek(GptSectorSize, SeekOrigin.Begin);
+        iso.Write(header, 0, GptSectorSize);
+
+        iso.Seek((long)newBackupPartLba * GptSectorSize, SeekOrigin.Begin);
+        iso.Write(partArray, 0, partArray.Length);
+
+        var backup = (byte[])header.Clone();
+        WriteUInt64LE(backup, 24, newAlt);       // Current LBA
+        WriteUInt64LE(backup, 32, 1);            // Alternate = primary
+        WriteUInt64LE(backup, 72, newBackupPartLba);
+        WriteUInt32LE(backup, 16, 0);
+        WriteUInt32LE(backup, 16, Crc32Ieee(backup.AsSpan(0, (int)headerSize)));
+
+        iso.Seek((long)newAlt * GptSectorSize, SeekOrigin.Begin);
+        iso.Write(backup, 0, GptSectorSize);
+    }
+
+    private static void WriteUInt32LE(byte[] buffer, int offset, uint value)
+    {
+        buffer[offset] = (byte)value;
+        buffer[offset + 1] = (byte)(value >> 8);
+        buffer[offset + 2] = (byte)(value >> 16);
+        buffer[offset + 3] = (byte)(value >> 24);
+    }
+
+    private static void WriteUInt64LE(byte[] buffer, int offset, ulong value)
+    {
+        for (var i = 0; i < 8; i++)
+            buffer[offset + i] = (byte)(value >> (8 * i));
+    }
+
+    private static uint ReadBigEndianUInt32(byte[] buf, int offset) =>
+        (uint)((buf[offset] << 24) | (buf[offset + 1] << 16) | (buf[offset + 2] << 8) | buf[offset + 3]);
+
+    /// <summary>ISO 3309 / GPT CRC-32 (reflected poly 0xEDB88320).</summary>
+    private static uint Crc32Ieee(ReadOnlySpan<byte> data)
+    {
+        var table = Crc32Table;
+        uint crc = 0xFFFFFFFFu;
+        foreach (var b in data)
+            crc = table[(crc ^ b) & 0xFF] ^ (crc >> 8);
+        return crc ^ 0xFFFFFFFFu;
+    }
+
+    private static readonly uint[] Crc32Table = CreateCrc32Table();
+
+    private static uint[] CreateCrc32Table()
+    {
+        var table = new uint[256];
+        for (uint i = 0; i < 256; i++)
+        {
+            var crc = i;
+            for (var j = 0; j < 8; j++)
+                crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xEDB88320u : crc >> 1;
+            table[i] = crc;
+        }
+        return table;
     }
 
     private static bool IsJolietEscape(byte[] pvdSector)

@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using Microsoft.Win32;
@@ -93,11 +93,11 @@ public partial class MainWindow : Window
                 _lastOutputPath = result.OutputIsoPath;
                 ReplaceQuickRow(injectRow, RowStatus.Ok, "Done!",
                     $"Patched {result.FoundPath} → {Path.GetFileName(result.OutputIsoPath)}. " +
-                    "After install (still live): sudo bash /cdrom/apply-omen-acpi.sh /mnt");
+                    "Live: sudo bash /cdrom/apply-omen-acpi.sh /mnt — after reboot: sudo bash /cdrom/post-install-omen.sh");
                 QuickResultActions.Visibility = Visibility.Visible;
                 StatusText.Text =
-                    "Ready to flash. After install choose Continue testing, then: " +
-                    "sudo bash /cdrom/apply-omen-acpi.sh /mnt — then reboot.";
+                    "Ready to flash. After install: apply-omen-acpi.sh /mnt (still live), reboot, " +
+                    "then sudo bash /cdrom/post-install-omen.sh";
             }
             catch (Exception ex)
             {
@@ -366,7 +366,7 @@ public partial class MainWindow : Window
             _lastOutputPath = result.OutputIsoPath;
             StatusText.Text =
                 $"Done — patched {result.FoundPath} (+{result.InjectedBytes:N0} bytes). " +
-                $"Saved to {result.OutputIsoPath}. After install: sudo bash /cdrom/apply-omen-acpi.sh /mnt";
+                $"Saved to {result.OutputIsoPath}. After reboot into Linux: sudo bash /cdrom/post-install-omen.sh";
         }
         catch (Exception ex)
         {

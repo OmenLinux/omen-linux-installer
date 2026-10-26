@@ -5,8 +5,8 @@ using System.Text;
 namespace OmenPrep.Services;
 
 /// <summary>
-/// ISO-root helpers: <c>apply-omen-acpi.sh</c> prepends the shipped
-/// <c>omen-acpi.cpio</c> onto installed initrds after install.
+/// ISO-root helpers: <c>apply-omen-acpi.sh</c> installs ACPI into the
+/// target (Fedora: dracut acpi_override; others: early initrd / prepend).
 /// </summary>
 public static class AcpiPersistPayload
 {
