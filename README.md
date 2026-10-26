@@ -95,14 +95,3 @@ cd omen-linux-installer
 ```powershell
 dotnet test .\windows-tool.Tests\OmenPrep.Tests.csproj -c Release
 ```
-
-No Node. iasl runs as wasm via Wasmtime.
-
-## Links
-
-- [omenlinux.alessandromarcon.dev](https://omenlinux.alessandromarcon.dev/)
-- [acpi-patcher](https://omenlinux.alessandromarcon.dev/acpi-patcher/)
-- [omen-rgb-keyboard](https://github.com/OmenLinux/omen-rgb-keyboard)
-- [OmenLinux on GitHub](https://github.com/OmenLinux)
-
-Bundled `iasl.wasm` is ACPICA; their license applies to that binary. The rest of this repo is whatever `LICENSE` says if one is present.
