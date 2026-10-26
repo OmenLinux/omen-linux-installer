@@ -1,6 +1,6 @@
 # Omen Linux Installer
 
-<img src="docs/screenshots/app-icon-small.png" alt="" width="28" height="28"> Windows tool for getting Linux onto an HP OMEN without fighting the ACPI tables by hand.
+Windows tool for getting Linux onto an HP OMEN without fighting the ACPI tables by hand.
 
 It dumps your DSDT from Windows, patches it (same rules as the [online patcher](https://omenlinux.alessandromarcon.dev/acpi-patcher/)), and injects that into a Linux install ISO. After you install, a couple of scripts on the ISO make the fix permanent and can set up keyboard RGB.
 
