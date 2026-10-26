@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DiscUtils.Iso9660" Version="0.16.13" />
+    <PackageReference Include="System.Management" Version="10.0.13" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="Iasl\**" CopyToOutputDirectory="PreserveNewest" />
+    <EmbeddedResource Include="Resources\apply-omen-acpi.sh" LogicalName="OmenPrep.apply-omen-acpi.sh" />
+    <EmbeddedResource Include="Resources\install-omen-keyboard.sh" LogicalName="OmenPrep.install-omen-keyboard.sh" />
+    <None Include="Resources\*.sh" CopyToOutputDirectory="PreserveNewest" />
+    <Resource Include="Assets\app-icon.ico" />
+    <Resource Include="Assets\app-icon-small.png" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/windows-tool.Tests/">
+    <Project Path="windows-tool.Tests/OmenPrep.Tests.csproj" />
+  </Folder>
+  <Folder Name="/windows-tool/">
+    <Project Path="windows-tool/OmenPrep.csproj" />
+  </Folder>
+</Solution>
