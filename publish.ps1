@@ -1,5 +1,5 @@
 # Build a single-file OmenPrep.exe into .\artifacts\
-# Needs: .NET 10 SDK. Runtime on target PCs: .NET 10 Desktop + Node.js.
+# Needs: .NET 10 SDK. Target PCs need nothing else (self-contained publish).
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 dotnet publish "$root\windows-tool\OmenPrep.csproj" `
