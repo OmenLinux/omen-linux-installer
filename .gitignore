@@ -4,3 +4,4 @@ obj/
 omen-prep-dump*/
 *.aml
 *.iso
+.vs
